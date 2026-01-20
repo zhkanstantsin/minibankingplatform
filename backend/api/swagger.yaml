@@ -1,0 +1,955 @@
+openapi: 3.0.3
+info:
+  title: Mini Banking Platform API
+  description: |
+    A simplified banking platform API that handles financial transactions with
+    double-entry bookkeeping. The system maintains data integrity through ledger
+    validation and provides user-friendly error responses following RFC 7807.
+  version: 1.0.0
+  contact:
+    name: API Support
+
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Local development server
+
+tags:
+  - name: Auth
+    description: Authentication operations
+  - name: Accounts
+    description: Account management operations
+  - name: Transactions
+    description: Transaction operations (transfers and exchanges)
+  - name: System
+    description: System operations (reconciliation)
+
+paths:
+  /auth/register:
+    post:
+      tags:
+        - Auth
+      summary: Register a new user
+      description: |
+        Creates a new user with initial accounts:
+        - 1 USD account with $1000.00 initial balance
+        - 1 EUR account with €500.00 initial balance
+        
+        Initial balances are funded from the system cashbook to maintain
+        double-entry bookkeeping integrity.
+      operationId: register
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: User successfully registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          description: Invalid request body
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                type: "https://minibankingplatform.com/problems/validation-error"
+                title: "Validation Error"
+                status: 400
+                detail: "Email field is required"
+                instance: "/auth/register"
+        '409':
+          description: User already exists
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                type: "https://minibankingplatform.com/problems/user-already-exists"
+                title: "User Already Exists"
+                status: 409
+                detail: "User with email user@example.com already exists"
+                instance: "/auth/register"
+                email: "user@example.com"
+
+  /auth/login:
+    post:
+      tags:
+        - Auth
+      summary: Authenticate user
+      description: Authenticates a user and returns a JWT token.
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Successfully authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          description: Invalid request body
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Invalid credentials
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                type: "https://minibankingplatform.com/problems/invalid-credentials"
+                title: "Invalid Credentials"
+                status: 401
+                detail: "The provided email or password is incorrect"
+                instance: "/auth/login"
+
+  /auth/me:
+    get:
+      tags:
+        - Auth
+      summary: Get current user info
+      description: Returns information about the currently authenticated user.
+      operationId: getCurrentUser
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Current user information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserInfo'
+        '401':
+          description: Unauthorized
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                type: "https://minibankingplatform.com/problems/unauthorized"
+                title: "Unauthorized"
+                status: 401
+                detail: "Authentication required"
+                instance: "/auth/me"
+
+  /accounts:
+    get:
+      tags:
+        - Accounts
+      summary: List user's accounts
+      description: Returns all accounts belonging to the authenticated user with their current balances.
+      operationId: listAccounts
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: List of user's accounts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Account'
+        '401':
+          description: Unauthorized
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /accounts/{accountId}/balance:
+    get:
+      tags:
+        - Accounts
+      summary: Get account balance
+      description: Returns the current balance of the specified account.
+      operationId: getAccountBalance
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          description: Account UUID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Account balance
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Balance'
+        '401':
+          description: Unauthorized
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden - account does not belong to user
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                type: "https://minibankingplatform.com/problems/forbidden"
+                title: "Forbidden"
+                status: 403
+                detail: "You do not have access to this account"
+                instance: "/accounts/123e4567-e89b-12d3-a456-426614174000/balance"
+        '404':
+          description: Account not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                type: "https://minibankingplatform.com/problems/account-not-found"
+                title: "Account Not Found"
+                status: 404
+                detail: "Account 123e4567-e89b-12d3-a456-426614174000 not found"
+                instance: "/accounts/123e4567-e89b-12d3-a456-426614174000/balance"
+                accountId: "123e4567-e89b-12d3-a456-426614174000"
+
+  /transactions/transfer:
+    post:
+      tags:
+        - Transactions
+      summary: Transfer money between users
+      description: |
+        Transfers money from the authenticated user's account to another user's account.
+        Both accounts must have the same currency. The operation is atomic and maintains
+        double-entry bookkeeping integrity.
+      operationId: transfer
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransferRequest'
+      responses:
+        '200':
+          description: Transfer completed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransferResponse'
+        '400':
+          description: Invalid transfer request
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              examples:
+                negativeAmount:
+                  summary: Negative amount
+                  value:
+                    type: "https://minibankingplatform.com/problems/negative-transfer-amount"
+                    title: "Negative Transfer Amount"
+                    status: 400
+                    detail: "Cannot transfer a negative amount: -100.00"
+                    instance: "/transactions/transfer"
+                    amount: "-100.00"
+                currencyMismatch:
+                  summary: Currency mismatch
+                  value:
+                    type: "https://minibankingplatform.com/problems/currency-mismatch"
+                    title: "Currency Mismatch"
+                    status: 400
+                    detail: "USD and EUR are not equal currencies"
+                    instance: "/transactions/transfer"
+                    sourceCurrency: "USD"
+                    targetCurrency: "EUR"
+                unsupportedCurrency:
+                  summary: Unsupported currency
+                  value:
+                    type: "https://minibankingplatform.com/problems/unsupported-currency"
+                    title: "Unsupported Currency"
+                    status: 400
+                    detail: "Unsupported currency GBP"
+                    instance: "/transactions/transfer"
+                    currency: "GBP"
+                insufficientFunds:
+                  summary: Insufficient funds
+                  value:
+                    type: "https://minibankingplatform.com/problems/insufficient-funds"
+                    title: "Insufficient Funds"
+                    status: 400
+                    detail: "Account has insufficient funds for this transfer"
+                    instance: "/transactions/transfer"
+                    available: "500.00"
+                    required: "1000.00"
+                    currency: "USD"
+        '401':
+          description: Unauthorized
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Account not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                type: "https://minibankingplatform.com/problems/account-not-found"
+                title: "Account Not Found"
+                status: 404
+                detail: "Account 123e4567-e89b-12d3-a456-426614174000 not found"
+                instance: "/transactions/transfer"
+                accountId: "123e4567-e89b-12d3-a456-426614174000"
+
+  /transactions/exchange:
+    post:
+      tags:
+        - Transactions
+      summary: Exchange currency within user's accounts
+      description: |
+        Exchanges money between the authenticated user's accounts with different currencies.
+        Uses a fixed exchange rate: 1 USD = 0.92 EUR. The operation is atomic and maintains
+        double-entry bookkeeping integrity through cashbook accounts.
+      operationId: exchange
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExchangeRequest'
+      responses:
+        '200':
+          description: Exchange completed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExchangeResponse'
+        '400':
+          description: Invalid exchange request
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              examples:
+                negativeAmount:
+                  summary: Negative amount
+                  value:
+                    type: "https://minibankingplatform.com/problems/negative-exchange-amount"
+                    title: "Negative Exchange Amount"
+                    status: 400
+                    detail: "Cannot exchange a negative amount: -100.00"
+                    instance: "/transactions/exchange"
+                    amount: "-100.00"
+                sameCurrency:
+                  summary: Same currency exchange
+                  value:
+                    type: "https://minibankingplatform.com/problems/same-currency-exchange"
+                    title: "Same Currency Exchange"
+                    status: 400
+                    detail: "Cannot exchange within the same currency: USD"
+                    instance: "/transactions/exchange"
+                    currency: "USD"
+                insufficientFunds:
+                  summary: Insufficient funds
+                  value:
+                    type: "https://minibankingplatform.com/problems/insufficient-funds"
+                    title: "Insufficient Funds"
+                    status: 400
+                    detail: "Account has insufficient funds for this exchange"
+                    instance: "/transactions/exchange"
+                    available: "500.00"
+                    required: "1000.00"
+                    currency: "USD"
+        '401':
+          description: Unauthorized
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Account not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /transactions/exchange/calculate:
+    get:
+      tags:
+        - Transactions
+      summary: Calculate exchange amount
+      description: |
+        Calculates how much will be received when exchanging the given amount
+        from source currency to target currency using the current exchange rate.
+        This is a read-only operation for preview purposes.
+      operationId: calculateExchange
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: amount
+          in: query
+          required: true
+          description: Amount to exchange
+          schema:
+            type: string
+            pattern: ^\d+(\.\d{1,2})?$
+            example: "100.00"
+        - name: sourceCurrency
+          in: query
+          required: true
+          description: Source currency
+          schema:
+            $ref: '#/components/schemas/Currency'
+        - name: targetCurrency
+          in: query
+          required: true
+          description: Target currency
+          schema:
+            $ref: '#/components/schemas/Currency'
+      responses:
+        '200':
+          description: Exchange calculation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExchangeCalculation'
+        '400':
+          description: Invalid calculation request
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              examples:
+                sameCurrency:
+                  summary: Same currency
+                  value:
+                    type: "https://minibankingplatform.com/problems/same-currency-exchange-rate"
+                    title: "Same Currency Exchange Rate"
+                    status: 400
+                    detail: "Exchange rate cannot have the same source and target currency: USD"
+                    instance: "/transactions/exchange/calculate"
+                    currency: "USD"
+        '401':
+          description: Unauthorized
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /transactions:
+    get:
+      tags:
+        - Transactions
+      summary: List transactions
+      description: |
+        Returns a paginated list of transactions for the authenticated user.
+        Can be filtered by transaction type.
+      operationId: listTransactions
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: type
+          in: query
+          required: false
+          description: Filter by transaction type
+          schema:
+            $ref: '#/components/schemas/TransactionType'
+        - name: page
+          in: query
+          required: false
+          description: Page number (1-based)
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          required: false
+          description: Number of items per page
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Paginated list of transactions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionsResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /system/reconcile:
+    get:
+      tags:
+        - System
+      summary: Reconciliation report
+      description: |
+        Performs a full reconciliation check of the double-entry bookkeeping system.
+        Verifies:
+        1. The sum of all ledger entries for each currency equals zero
+        2. Each account's balance matches the sum of its ledger entries
+        
+        This is a read-only operation for auditing and monitoring purposes.
+      operationId: reconcile
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Reconciliation report
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReconciliationReport'
+        '401':
+          description: Unauthorized
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token obtained from login or register endpoints
+
+  schemas:
+    # Request schemas
+    RegisterRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+          example: "user@example.com"
+          x-oapi-codegen-extra-tags:
+            validate: "required,email"
+        password:
+          type: string
+          minLength: 8
+          example: "securePassword123"
+          x-oapi-codegen-extra-tags:
+            validate: "required,min=8"
+
+    LoginRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+          example: "user@example.com"
+          x-oapi-codegen-extra-tags:
+            validate: "required,email"
+        password:
+          type: string
+          example: "securePassword123"
+          x-oapi-codegen-extra-tags:
+            validate: "required"
+
+    TransferRequest:
+      type: object
+      required:
+        - fromAccountId
+        - toAccountId
+        - amount
+        - currency
+      properties:
+        fromAccountId:
+          type: string
+          format: uuid
+          description: Source account UUID (must belong to authenticated user)
+          x-oapi-codegen-extra-tags:
+            validate: "required,uuid"
+        toAccountId:
+          type: string
+          format: uuid
+          description: Destination account UUID
+          x-oapi-codegen-extra-tags:
+            validate: "required,uuid"
+        amount:
+          type: string
+          pattern: ^\d+(\.\d{1,2})?$
+          description: Amount to transfer (positive, 2 decimal places)
+          example: "100.00"
+          x-oapi-codegen-extra-tags:
+            validate: "required"
+        currency:
+          $ref: '#/components/schemas/Currency'
+          x-oapi-codegen-extra-tags:
+            validate: "required,oneof=USD EUR"
+
+    ExchangeRequest:
+      type: object
+      required:
+        - sourceAccountId
+        - targetAccountId
+        - amount
+      properties:
+        sourceAccountId:
+          type: string
+          format: uuid
+          description: Source account UUID (currency to exchange from)
+          x-oapi-codegen-extra-tags:
+            validate: "required,uuid"
+        targetAccountId:
+          type: string
+          format: uuid
+          description: Target account UUID (currency to exchange to)
+          x-oapi-codegen-extra-tags:
+            validate: "required,uuid"
+        amount:
+          type: string
+          pattern: ^\d+(\.\d{1,2})?$
+          description: Amount to exchange from source currency
+          example: "100.00"
+          x-oapi-codegen-extra-tags:
+            validate: "required"
+
+    # Response schemas
+    AuthResponse:
+      type: object
+      properties:
+        userId:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        token:
+          type: string
+          description: JWT token for authentication
+
+    UserInfo:
+      type: object
+      properties:
+        userId:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+
+    Account:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+        balance:
+          $ref: '#/components/schemas/Money'
+
+    Balance:
+      type: object
+      properties:
+        accountId:
+          type: string
+          format: uuid
+        balance:
+          $ref: '#/components/schemas/Money'
+
+    Money:
+      type: object
+      properties:
+        amount:
+          type: string
+          description: Decimal amount with 2 decimal places
+          example: "1000.00"
+        currency:
+          $ref: '#/components/schemas/Currency'
+
+    TransferResponse:
+      type: object
+      properties:
+        transactionId:
+          type: string
+          format: uuid
+        fromAccountId:
+          type: string
+          format: uuid
+        toAccountId:
+          type: string
+          format: uuid
+        amount:
+          $ref: '#/components/schemas/Money'
+        timestamp:
+          type: string
+          format: date-time
+
+    ExchangeResponse:
+      type: object
+      properties:
+        transactionId:
+          type: string
+          format: uuid
+        sourceAccountId:
+          type: string
+          format: uuid
+        targetAccountId:
+          type: string
+          format: uuid
+        sourceAmount:
+          $ref: '#/components/schemas/Money'
+        targetAmount:
+          $ref: '#/components/schemas/Money'
+        exchangeRate:
+          type: string
+          description: Exchange rate used (e.g., "0.92" for USD to EUR)
+          example: "0.92"
+        timestamp:
+          type: string
+          format: date-time
+
+    ExchangeCalculation:
+      type: object
+      properties:
+        sourceAmount:
+          $ref: '#/components/schemas/Money'
+        targetAmount:
+          $ref: '#/components/schemas/Money'
+        exchangeRate:
+          type: object
+          properties:
+            sourceCurrency:
+              $ref: '#/components/schemas/Currency'
+            targetCurrency:
+              $ref: '#/components/schemas/Currency'
+            rate:
+              type: string
+              description: Exchange rate value
+              example: "0.92"
+
+    Transaction:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          $ref: '#/components/schemas/TransactionType'
+        accountId:
+          type: string
+          format: uuid
+        timestamp:
+          type: string
+          format: date-time
+        transferDetails:
+          $ref: '#/components/schemas/TransferDetails'
+        exchangeDetails:
+          $ref: '#/components/schemas/ExchangeDetails'
+
+    TransferDetails:
+      type: object
+      nullable: true
+      properties:
+        id:
+          type: string
+          format: uuid
+        recipientAccountId:
+          type: string
+          format: uuid
+        amount:
+          $ref: '#/components/schemas/Money'
+
+    ExchangeDetails:
+      type: object
+      nullable: true
+      properties:
+        id:
+          type: string
+          format: uuid
+        sourceAccountId:
+          type: string
+          format: uuid
+        targetAccountId:
+          type: string
+          format: uuid
+        sourceAmount:
+          $ref: '#/components/schemas/Money'
+        targetAmount:
+          $ref: '#/components/schemas/Money'
+        exchangeRate:
+          type: string
+          example: "0.92"
+
+    TransactionsResponse:
+      type: object
+      properties:
+        transactions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Transaction'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    Pagination:
+      type: object
+      properties:
+        total:
+          type: integer
+          description: Total number of items
+        page:
+          type: integer
+          description: Current page number
+        limit:
+          type: integer
+          description: Items per page
+        totalPages:
+          type: integer
+          description: Total number of pages
+
+    ReconciliationReport:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        isConsistent:
+          type: boolean
+          description: True if all checks passed
+        ledgerBalances:
+          type: array
+          items:
+            $ref: '#/components/schemas/LedgerCurrencyStatus'
+        accountMismatches:
+          type: array
+          items:
+            $ref: '#/components/schemas/AccountMismatch'
+        totalAccountsChecked:
+          type: integer
+
+    LedgerCurrencyStatus:
+      type: object
+      properties:
+        currency:
+          $ref: '#/components/schemas/Currency'
+        totalSum:
+          type: string
+          description: Sum of all ledger entries for this currency
+          example: "0.00"
+        isBalanced:
+          type: boolean
+          description: True if totalSum is zero
+
+    AccountMismatch:
+      type: object
+      properties:
+        accountId:
+          type: string
+          format: uuid
+        currency:
+          $ref: '#/components/schemas/Currency'
+        accountBalance:
+          type: string
+          example: "1000.00"
+        ledgerBalance:
+          type: string
+          example: "950.00"
+        difference:
+          type: string
+          example: "50.00"
+
+    # Enums
+    Currency:
+      type: string
+      enum:
+        - USD
+        - EUR
+      description: Supported currencies
+
+    TransactionType:
+      type: string
+      enum:
+        - transfer
+        - exchange
+        - deposit
+        - withdrawal
+      description: Type of transaction
+
+    # RFC 7807 Problem Details
+    ProblemDetails:
+      type: object
+      description: RFC 7807 Problem Details for HTTP APIs
+      required:
+        - type
+        - title
+        - status
+      properties:
+        type:
+          type: string
+          format: uri
+          description: |
+            A URI reference that identifies the problem type.
+            This specification encourages that, when dereferenced,
+            it provide human-readable documentation for the problem type.
+          example: "https://minibankingplatform.com/problems/insufficient-funds"
+        title:
+          type: string
+          description: |
+            A short, human-readable summary of the problem type.
+            It SHOULD NOT change from occurrence to occurrence of the problem.
+          example: "Insufficient Funds"
+        status:
+          type: integer
+          description: |
+            The HTTP status code generated by the origin server for this
+            occurrence of the problem.
+          example: 400
+        detail:
+          type: string
+          description: |
+            A human-readable explanation specific to this occurrence
+            of the problem.
+          example: "Account has insufficient funds for this transfer"
+        instance:
+          type: string
+          format: uri-reference
+          description: |
+            A URI reference that identifies the specific occurrence of
+            the problem. It may or may not yield further information
+            if dereferenced.
+          example: "/transactions/transfer"
+      additionalProperties: true
+      example:
+        type: "https://minibankingplatform.com/problems/insufficient-funds"
+        title: "Insufficient Funds"
+        status: 400
+        detail: "Account has insufficient funds for this transfer"
+        instance: "/transactions/transfer"
+        available: "500.00"
+        required: "1000.00"
+        currency: "USD"

@@ -1,0 +1,23 @@
+# Git
+.git
+.gitignore
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+
+# Binary output
+bin/
+*.exe
+
+# Test cache
+.go-test/
+
+# Local env
+.env
+.env.local
